@@ -1,0 +1,20 @@
+{
+    "name": "cooldogedev/spectral-php",
+    "type": "library",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "cooldogedev\\spectral\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Doge",
+            "email": "cooldogedev@gmail.com"
+        }
+    ],
+    "require": {
+      "ext-encoding": "*",
+      "ext-sockets": "*"
+    }
+}
