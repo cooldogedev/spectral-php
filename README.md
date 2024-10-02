@@ -1,6 +1,6 @@
 # spectral-php
 
-**spectral-php** is the PHP implementation of the [Spectral](https://github.com/cooldogedev/spectral) engine, a lightweight, high-performance network engine built on UDP. It is designed for real-time applications such as gaming, streaming, and other low-latency communication scenarios.
+**spectral-php** is the PHP implementation of the [Spectral](https://github.com/cooldogedev/spectral) engine, a blazingly fast, lightweight, and powerful network engine designed for real-time, low-latency applications such as gaming, streaming, and other interactive services. Built on top of UDP, Spectral ensures high performance while maintaining reliability through advanced networking concepts.
 
 ## Examples
 
