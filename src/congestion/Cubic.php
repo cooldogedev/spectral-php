@@ -13,23 +13,18 @@ use const INF;
 
 final class Cubic
 {
-    private const MAX_CWND = 1000000;
+    private const WINDOW_INITIAL = Protocol::MAX_PACKET_SIZE * 32;
+    private const WINDOW_MAX = 1000000;
+
     private const CUBIC_BETA = 0.7;
     private const CUBIC_C = 0.4;
 
-    private float $cwnd;
-    private float $wMax;
-    private float $ssthres;
-    private float $inFlight = 0;
-    private float $k = 0;
+    private float $cwnd = Cubic::WINDOW_INITIAL;
+    private float $wMax = Cubic::WINDOW_INITIAL;
+    private float $ssthres = INF;
+    private float $inFlight = 0.0;
+    private float $k = 0.0;
     private int $epochStart = 0;
-
-    public function __construct()
-    {
-        $this->cwnd = 10 * Protocol::MAX_PACKET_SIZE;
-        $this->wMax = 10 * Protocol::MAX_PACKET_SIZE;
-        $this->ssthres = INF;
-    }
 
     public function onSend(int $bytes): bool
     {
@@ -44,7 +39,7 @@ final class Cubic
     {
         $this->inFlight = max($this->inFlight - $bytes, 0);
         if ($this->ssthres > $this->cwnd) {
-            $this->cwnd = min($this->cwnd + $bytes, Cubic::MAX_CWND);
+            $this->cwnd = min($this->cwnd + $bytes, Cubic::WINDOW_MAX);
             return;
         }
 
@@ -56,7 +51,7 @@ final class Cubic
         $elapsed = time() - $this->epochStart;
         $cwnd = Cubic::CUBIC_C * pow($elapsed - $this->k, 3) + $this->wMax;
         if ($cwnd > 0) {
-            $this->cwnd = min($this->cwnd, Cubic::MAX_CWND);
+            $this->cwnd = min($this->cwnd, Cubic::WINDOW_MAX);
         }
     }
 
