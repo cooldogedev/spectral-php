@@ -8,6 +8,7 @@ use cooldogedev\spectral\Utils;
 use function floor;
 use function max;
 use function min;
+use function round;
 
 final class Pacer
 {
@@ -32,7 +33,7 @@ final class Pacer
             $this->lastRefill = $now;
         }
 
-        $tokensNeeded = ($bytes + Pacer::PACER_BYTES_PER_TOKEN - 1) / Pacer::PACER_BYTES_PER_TOKEN;
+        $tokensNeeded = (int)round(($bytes + Pacer::PACER_BYTES_PER_TOKEN - 1) / Pacer::PACER_BYTES_PER_TOKEN);
         if ($this->tokens >= $tokensNeeded) {
             $this->tokens -= $tokensNeeded;
             return true;
