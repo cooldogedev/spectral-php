@@ -45,7 +45,10 @@ final class Dial
                 $connection->closeWithError(ConnectionClose::CONNECTION_CLOSE_TIMEOUT, "network inactivity");
                 throw new RuntimeException("connection closed due to timeout");
             }
-            $connection->tick();
+
+            if (!$connection->tick()) {
+                throw new RuntimeException("could not establish connection");
+            }
         }
 
         if ($connection->connectionResponse !== ConnectionResponse::CONNECTION_RESPONSE_SUCCESS) {
