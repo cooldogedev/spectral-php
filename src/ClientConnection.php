@@ -36,7 +36,9 @@ final class ClientConnection extends Connection
 
     public function tick(): bool
     {
-        $this->read();
+        if (!$this->closed) {
+            $this->read();
+        }
         return parent::tick();
     }
 
