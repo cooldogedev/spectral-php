@@ -40,7 +40,7 @@ abstract class Connection
     {
         $this->ack = new AckQueue();
         $this->congestionController = new Cubic();
-        $this->pacer = new Pacer(10_000, 20);
+        $this->pacer = new Pacer(10_000, 30);
         $this->retransmission = new RetransmissionQueue();
         $this->sendQueue = new SendQueue($this->connectionID);
         $this->streams = new StreamMap();
