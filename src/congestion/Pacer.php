@@ -6,13 +6,11 @@ namespace cooldogedev\spectral\congestion;
 
 use cooldogedev\spectral\Utils;
 use function floor;
-use function max;
 use function min;
 use function round;
 
 final class Pacer
 {
-    private const PACER_INTERVAL_MIN = 50;
     private const PACER_BYTES_PER_TOKEN = 512;
 
     private int $tokens;
@@ -43,6 +41,8 @@ final class Pacer
 
     public function setInterval(int $interval): void
     {
-        $this->interval = max($interval, Pacer::PACER_INTERVAL_MIN);
+        if ($this->interval > 0) {
+            $this->interval = $interval;
+        }
     }
 }

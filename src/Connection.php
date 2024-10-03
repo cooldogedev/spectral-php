@@ -163,6 +163,9 @@ abstract class Connection
 
     private function transmit(): bool
     {
+        $cwnd = $this->congestionController->getCwnd();
+        $inFlight = $this->congestionController->getInFlight();
+        $this->pacer->setInterval((int)floor(($this->rtt->get() / $cwnd) * ($cwnd - $inFlight)));
         if ($this->sendQueue->isEmpty()) {
             return false;
         }
@@ -173,7 +176,6 @@ abstract class Connection
             return false;
         }
 
-        $this->pacer->setInterval((int)floor($this->rtt->get() / $this->congestionController->getCwnd()));
         if (!$this->pacer->consume($size)) {
             return false;
         }

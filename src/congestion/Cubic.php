@@ -72,6 +72,11 @@ final class Cubic
 
     public function getCwnd(): float
     {
-        return $this->cwnd - $this->inFlight;
+        return $this->cwnd;
+    }
+
+    public function getInFlight(): float
+    {
+        return $this->inFlight;
     }
 }
