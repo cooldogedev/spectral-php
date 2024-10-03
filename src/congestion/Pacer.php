@@ -41,7 +41,7 @@ final class Pacer
 
     public function setInterval(int $interval): void
     {
-        if ($this->interval > 0) {
+        if ($interval > 0) {
             $this->interval = $interval;
         }
     }
