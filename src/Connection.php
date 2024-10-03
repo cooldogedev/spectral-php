@@ -168,7 +168,7 @@ abstract class Connection
 
         $packet = $this->sendQueue->compute();
         $size = strlen($packet) + Protocol::PACKET_HEADER_SIZE;
-        if ($this->congestionController->onSend($size)) {
+        if (!$this->congestionController->onSend($size)) {
             return false;
         }
 
