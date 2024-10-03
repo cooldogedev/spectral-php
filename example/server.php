@@ -1,8 +1,15 @@
 <?php
 
+declare(strict_types=1);
+
+namespace cooldogedev\example;
+
 use cooldogedev\spectral\Listener;
 use cooldogedev\spectral\ServerConnection;
 use cooldogedev\spectral\Stream;
+use Exception;
+
+require dirname(__DIR__) . "/vendor/autoload.php";
 
 $address = "0.0.0.0";
 $port = 8080;
@@ -22,4 +29,5 @@ $streamAcceptor = static function (Stream $stream): void {
     });
 };
 $listener->setConnectionAcceptor(static fn (ServerConnection $connection) => $connection->setStreamAcceptor($streamAcceptor));
+echo "started listening on :8080" . PHP_EOL;
 while ($listener->tick());

@@ -16,5 +16,9 @@
     "require": {
       "ext-encoding": "*",
       "ext-sockets": "*"
+    },
+    "scripts": {
+        "client": "@php example/client.php",
+        "server": "@php example/server.php"
     }
 }

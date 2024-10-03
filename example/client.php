@@ -1,7 +1,14 @@
 <?php
 
+declare(strict_types=1);
+
+namespace cooldogedev\example;
+
 use cooldogedev\spectral\Dial;
 use cooldogedev\spectral\Stream;
+use Exception;
+
+require dirname(__DIR__) . "/vendor/autoload.php";
 
 $address = "0.0.0.0";
 $port = 8080;
