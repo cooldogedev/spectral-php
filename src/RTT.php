@@ -8,13 +8,19 @@ use function floor;
 
 final class RTT
 {
-    private const RTT_ALPHA = 0.1;
+    public const RTT_DEFAULT = 100;
+
+    private const RTT_ALPHA = 0.125;
     private const RTT_ONE_MINUS_ALPHA = 1.0 - RTT::RTT_ALPHA;
 
     private int $rtt = 0;
 
     public function add(int $rtt): void
     {
+        if ($rtt <= 0) {
+            return;
+        }
+
         if ($this->rtt === 0) {
             $this->rtt = $rtt;
         } else {
