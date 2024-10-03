@@ -45,6 +45,7 @@ abstract class Connection
         $this->sendQueue = new SendQueue($this->connectionID);
         $this->streams = new StreamMap();
         $this->rtt = new RTT();
+        $this->lastActivity = Utils::unixMilli();
     }
 
     public function getLocalAddress(): Address
@@ -162,7 +163,7 @@ abstract class Connection
 
     private function transmit(): bool
     {
-        if ($this->sendQueue->count() === 0) {
+        if ($this->sendQueue->isEmpty()) {
             return false;
         }
 
@@ -179,7 +180,7 @@ abstract class Connection
         [$sequenceID, $pk] = $this->sendQueue->flush();
         $this->retransmission->add($sequenceID, $pk);
         $this->conn->write($pk);
-        return $this->sendQueue->count() > 0;
+        return !$this->sendQueue->isEmpty();
     }
 
     private function acknowledge(): void

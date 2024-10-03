@@ -30,9 +30,9 @@ final class SendQueue
         $this->queue[] = $payload;
     }
 
-    public function count(): int
+    public function isEmpty(): bool
     {
-        return count($this->queue);
+        return count($this->queue) === 0 && $this->total === 0;
     }
 
     public function compute(): ?string
