@@ -58,7 +58,7 @@ final class Listener
             throw new RuntimeException("failed to set socket receive buffer");
         }
 
-        if (!socket_bind($socket, $address, $port)) {
+        if (!@socket_bind($socket, $address, $port)) {
             @socket_close($socket);
             throw new RuntimeException("failed to bind socket");
         }

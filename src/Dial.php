@@ -32,7 +32,7 @@ final class Dial
             throw new RuntimeException("failed to set socket send buffer");
         }
 
-        if (!socket_bind($socket, "0.0.0.0")) {
+        if (!@socket_bind($socket, "0.0.0.0")) {
             throw new RuntimeException("failed to bind socket");
         }
 
