@@ -79,10 +79,10 @@ final class Listener
         $this->socketInterruptions[] = $socket;
     }
 
-    public function tick(): void
+    public function tick(): bool
     {
         if ($this->closed) {
-            return;
+            return false;
         }
 
         $this->read();
@@ -91,6 +91,7 @@ final class Listener
                 unset($this->connections[$connectionID]);
             }
         }
+        return true;
     }
 
     public function close(): void
