@@ -28,10 +28,9 @@ final class ClientConnection extends Connection
      */
     public function openStream(?Closure $onResponse): void
     {
-        $streamID = $this->streamID;
-        $this->streamID++;
         $this->streamResponses[$this->streamID] = $onResponse ?? static fn () => null;
-        $this->write(StreamRequest::create($streamID));
+        $this->write(StreamRequest::create($this->streamID));
+        $this->streamID++;
     }
 
     public function tick(): bool
@@ -54,7 +53,8 @@ final class ClientConnection extends Connection
 
         $bytes = "";
         $address = "";
-        $received = @socket_recvfrom($this->conn->socket, $bytes, 1500, 0, $address);
+        $port = "";
+        $received = @socket_recvfrom($this->conn->socket, $bytes, 1500, 0, $address, $port);
         if ($received === false) {
             return;
         }
