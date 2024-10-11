@@ -29,6 +29,12 @@ final class AckQueue
         $this->queue[] = $sequenceID;
     }
 
+    public function addDuplicate(int $sequenceID): void
+    {
+        $this->sort = true;
+        $this->queue[] = $sequenceID;
+    }
+
     /**
      * @return null|array{0: int, 1: array<int>}
      */

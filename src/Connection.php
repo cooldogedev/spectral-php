@@ -91,6 +91,7 @@ abstract class Connection
     public function receive(int $sequenceID, array $frames): void
     {
         if (isset($this->received[$sequenceID])) {
+            $this->ack->addDuplicate($sequenceID);
             return;
         }
 
