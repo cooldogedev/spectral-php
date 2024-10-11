@@ -112,16 +112,21 @@ abstract class Connection
     public function handle(Frame $fr): void
     {
         if ($fr instanceof Acknowledgement) {
+            $ackedBytes = 0;
             foreach ($fr->ranges as $i => [$start, $end]) {
                 for ($j = $start; $j <= $end; $j++) {
                     $entry = $this->retransmission->remove($j);
                     if ($entry !== null) {
-                        $this->congestionController->onAck(strlen($entry->payload));
+                        $ackedBytes += strlen($entry->payload);
                         if ($i === count($fr->ranges) - 1 && $j === $end) {
                             $this->rtt->add((int)floor((Utils::unixNano() - $entry->timestamp - $fr->delay) / 1000));
                         }
                     }
                 }
+            }
+
+            if ($ackedBytes > 0) {
+                $this->congestionController->onAck($ackedBytes);
             }
 
             if ($fr->type === Acknowledgement::ACKNOWLEDGEMENT_WITH_GAPS) {
