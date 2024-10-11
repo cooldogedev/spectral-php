@@ -14,7 +14,7 @@ use const INF;
 final class Cubic
 {
     private const WINDOW_INITIAL = Protocol::MAX_PACKET_SIZE * 32;
-    private const WINDOW_MAX = 1000000;
+    private const WINDOW_MAX = Protocol::MAX_PACKET_SIZE * 10000;
 
     private const CUBIC_BETA = 0.7;
     private const CUBIC_C = 0.4;
