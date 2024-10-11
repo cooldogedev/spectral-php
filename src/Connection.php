@@ -123,7 +123,7 @@ abstract class Connection
                 }
             }
 
-            if ($fr->type !== Acknowledgement::ACKNOWLEDGEMENT_WITH_GAPS) {
+            if ($fr->type === Acknowledgement::ACKNOWLEDGEMENT_WITH_GAPS) {
                 foreach (Acknowledgement::generateAcknowledgementGaps($fr->ranges) as $sequenceID) {
                     $this->retransmission->nack($sequenceID);
                 }
