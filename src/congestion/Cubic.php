@@ -7,8 +7,8 @@ namespace cooldogedev\spectral\congestion;
 use cooldogedev\spectral\Protocol;
 use function max;
 use function min;
-use function time;
 use function pow;
+use function time;
 
 final class Cubic
 {
@@ -28,9 +28,9 @@ final class Cubic
     private int $epochStart = 0;
     private float $k = 0.0;
 
-    public function canSend(): bool
+    public function canSend(int $bytes): bool
     {
-        return $this->cwnd - $this->inFlight >= Protocol::MAX_PACKET_SIZE;
+        return $this->cwnd - $this->inFlight >= $bytes;
     }
 
     public function onSend(int $bytes): void
@@ -75,11 +75,6 @@ final class Cubic
     public function getCwnd(): int
     {
         return $this->cwnd;
-    }
-
-    public function getInFlight(): int
-    {
-        return $this->inFlight;
     }
 
     private function shouldIncreaseWindow(): bool

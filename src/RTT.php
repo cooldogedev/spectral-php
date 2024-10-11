@@ -8,8 +8,6 @@ use function floor;
 
 final class RTT
 {
-    public const RTT_DEFAULT = 100;
-
     private const RTT_ALPHA = 0.125;
     private const RTT_ONE_MINUS_ALPHA = 1.0 - RTT::RTT_ALPHA;
 

@@ -29,6 +29,7 @@ abstract class Connection
 
     protected int $lastActivity = 0;
     protected int $lastTick = 0;
+    protected int $nextTransmission = 0;
 
     /**
      * @var array<int, int>
@@ -40,7 +41,7 @@ abstract class Connection
     {
         $this->ack = new AckQueue();
         $this->congestionController = new Cubic();
-        $this->pacer = new Pacer(RTT::RTT_DEFAULT * 1000, 30);
+        $this->pacer = new Pacer();
         $this->retransmission = new RetransmissionQueue();
         $this->sendQueue = new SendQueue($this->connectionID);
         $this->streams = new StreamMap();
@@ -80,7 +81,7 @@ abstract class Connection
             $this->acknowledge();
             $this->retransmit();
         }
-        while ($this->transmit()) {}
+        $this->transmit($now);
         return true;
     }
 
@@ -119,7 +120,7 @@ abstract class Connection
                     if ($entry !== null) {
                         $ackedBytes += strlen($entry->payload);
                         if ($i === count($fr->ranges) - 1 && $j === $end) {
-                            $this->rtt->add((int)floor((Utils::unixNano() - $entry->timestamp - $fr->delay) / 1000));
+                            $this->rtt->add(Utils::unixNano() - $entry->timestamp - $fr->delay);
                         }
                     }
                 }
@@ -167,28 +168,28 @@ abstract class Connection
         return $stream;
     }
 
-    private function transmit(): bool
+    private function transmit(int $now): void
     {
-        if (!$this->congestionController->canSend()) {
-            return false;
+        $length = $this->sendQueue->pack();
+        if ($length === null || !$this->congestionController->canSend($length)) {
+            return;
         }
 
-        if ($this->sendQueue->isEmpty()) {
-            return false;
-        }
-
-        $cwnd = $this->congestionController->getCwnd();
-        $inFlight = $this->congestionController->getInFlight();
-        $packet = $this->sendQueue->compute();
-        $this->pacer->setInterval((int)floor(($this->rtt->get() / $cwnd) * ($cwnd - $inFlight)));
-        if (!$this->pacer->consume(strlen($packet))) {
-            return false;
+        if ($this->nextTransmission === 0) {
+            $delay = $this->pacer->delay($this->rtt->get(), $length, $this->congestionController->getCwnd());
+            if ($delay > 0) {
+                $this->nextTransmission = $now + $delay;
+                return;
+            }
+        } else if ($this->nextTransmission > $now) {
+            return;
         }
         [$sequenceID, $pk] = $this->sendQueue->flush();
         $this->congestionController->onSend(strlen($pk));
+        $this->pacer->onSend(strlen($pk));
         $this->retransmission->add($sequenceID, $pk);
         $this->conn->write($pk);
-        return !$this->sendQueue->isEmpty();
+        $this->nextTransmission = 0;
     }
 
     private function acknowledge(): void
