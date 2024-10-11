@@ -9,10 +9,11 @@ use function max;
 use function min;
 use function time;
 use function pow;
-use const INF;
 
 final class Cubic
 {
+    private const MAX_BURST_PACKETS = 3;
+
     private const WINDOW_INITIAL = Protocol::MAX_PACKET_SIZE * 32;
     private const WINDOW_MIN = Protocol::MAX_PACKET_SIZE * 2;
     private const WINDOW_MAX = Protocol::MAX_PACKET_SIZE * 10000;
@@ -20,25 +21,30 @@ final class Cubic
     private const CUBIC_BETA = 0.7;
     private const CUBIC_C = 0.4;
 
-    private float $cwnd = Cubic::WINDOW_INITIAL;
-    private float $wMax = Cubic::WINDOW_INITIAL;
-    private float $ssthres = INF;
-    private float $inFlight = 0.0;
-    private float $k = 0.0;
+    private int $cwnd = Cubic::WINDOW_INITIAL;
+    private int $wMax = Cubic::WINDOW_INITIAL;
+    private int $ssthres = Protocol::MAX_BYTE_COUNT;
+    private int $inFlight = 0;
     private int $epochStart = 0;
+    private float $k = 0.0;
 
-    public function onSend(int $bytes): bool
+    public function canSend(): bool
     {
-        if ($this->cwnd - $this->inFlight >= $bytes) {
-            $this->inFlight += $bytes;
-            return true;
-        }
-        return false;
+        return $this->cwnd - $this->inFlight >= Protocol::MAX_PACKET_SIZE;
+    }
+
+    public function onSend(int $bytes): void
+    {
+        $this->inFlight += $bytes;
     }
 
     public function onAck(int $bytes): void
     {
         $this->inFlight = max($this->inFlight - $bytes, 0);
+        if (!$this->shouldIncreaseWindow()) {
+            return;
+        }
+
         if ($this->ssthres > $this->cwnd) {
             $this->cwnd = min($this->cwnd + $bytes, Cubic::WINDOW_MAX);
             return;
@@ -50,29 +56,39 @@ final class Cubic
         }
 
         $elapsed = time() - $this->epochStart;
-        $cwnd = Cubic::CUBIC_C * pow($elapsed - $this->k, 3) + $this->wMax;
+        $cwnd = (int)floor(Cubic::CUBIC_C * pow($elapsed - $this->k, 3) + $this->wMax);
         if ($cwnd > 0) {
             $this->cwnd = min($this->cwnd, Cubic::WINDOW_MAX);
         }
     }
 
-    public function onLoss(int $bytes): void
+    public function onLoss(): void
     {
-        $this->inFlight = max($this->inFlight - $bytes, 0);
+        $this->inFlight = 0;
         $this->wMax = $this->cwnd;
-        $this->cwnd = max($this->cwnd * Cubic::CUBIC_BETA, Cubic::WINDOW_MIN);
+        $this->cwnd = (int)floor(max($this->cwnd*Cubic::CUBIC_BETA, Cubic::WINDOW_MIN));
         $this->ssthres = $this->cwnd;
         $this->epochStart = 0;
         $this->k = pow($this->wMax * (1.0 - Cubic::CUBIC_BETA) / Cubic::CUBIC_C, 1/3);
     }
 
-    public function getCwnd(): float
+    public function getCwnd(): int
     {
         return $this->cwnd;
     }
 
-    public function getInFlight(): float
+    public function getInFlight(): int
     {
         return $this->inFlight;
+    }
+
+    private function shouldIncreaseWindow(): bool
+    {
+        if ($this->inFlight >= $this->cwnd) {
+            return true;
+        }
+        $availableBytes = $this->cwnd - $this->inFlight;
+        $slowStartLimited = $this->ssthres > $this->cwnd && $this->inFlight > $this->cwnd/2;
+        return $slowStartLimited || $availableBytes <= Cubic::MAX_BURST_PACKETS*Protocol::MAX_PACKET_SIZE;
     }
 }

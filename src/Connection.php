@@ -164,23 +164,23 @@ abstract class Connection
 
     private function transmit(): bool
     {
-        $cwnd = $this->congestionController->getCwnd();
-        $inFlight = $this->congestionController->getInFlight();
-        $this->pacer->setInterval((int)floor(($this->rtt->get() / $cwnd) * ($cwnd - $inFlight)));
+        if (!$this->congestionController->canSend()) {
+            return false;
+        }
+
         if ($this->sendQueue->isEmpty()) {
             return false;
         }
 
+        $cwnd = $this->congestionController->getCwnd();
+        $inFlight = $this->congestionController->getInFlight();
         $packet = $this->sendQueue->compute();
-        $size = strlen($packet) + Protocol::PACKET_HEADER_SIZE;
-        if (!$this->congestionController->onSend($size)) {
-            return false;
-        }
-
-        if (!$this->pacer->consume($size)) {
+        $this->pacer->setInterval((int)floor(($this->rtt->get() / $cwnd) * ($cwnd - $inFlight)));
+        if (!$this->pacer->consume(strlen($packet))) {
             return false;
         }
         [$sequenceID, $pk] = $this->sendQueue->flush();
+        $this->congestionController->onSend(strlen($pk));
         $this->retransmission->add($sequenceID, $pk);
         $this->conn->write($pk);
         return !$this->sendQueue->isEmpty();
@@ -201,7 +201,7 @@ abstract class Connection
     {
         $entry = $this->retransmission->shift();
         if ($entry !== null) {
-            $this->congestionController->onLoss(strlen($entry));
+            $this->congestionController->onLoss();
             $this->conn->write($entry);
         }
     }
