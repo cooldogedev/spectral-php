@@ -14,6 +14,7 @@ use const INF;
 final class Cubic
 {
     private const WINDOW_INITIAL = Protocol::MAX_PACKET_SIZE * 32;
+    private const WINDOW_MIN = Protocol::MAX_PACKET_SIZE * 2;
     private const WINDOW_MAX = Protocol::MAX_PACKET_SIZE * 10000;
 
     private const CUBIC_BETA = 0.7;
@@ -59,7 +60,7 @@ final class Cubic
     {
         $this->inFlight = max($this->inFlight - $bytes, 0);
         $this->wMax = $this->cwnd;
-        $this->cwnd *= Cubic::CUBIC_BETA;
+        $this->cwnd = max($this->cwnd * Cubic::CUBIC_BETA, Cubic::WINDOW_MIN);
         $this->ssthres = $this->cwnd;
         $this->epochStart = 0;
         $this->k = pow($this->wMax * (1.0 - Cubic::CUBIC_BETA) / Cubic::CUBIC_C, 1/3);
