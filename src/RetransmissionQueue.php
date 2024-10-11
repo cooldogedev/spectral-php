@@ -8,7 +8,8 @@ use function count;
 
 final class RetransmissionQueue
 {
-    private const RETRANSMISSION_DELAY = 5000;
+    private const RETRANSMISSION_ATTEMPTS = 3;
+    private const RETRANSMISSION_DELAY = 3_000_000_000;
 
     /**
      * @var array<int, RetransmissionEntry>
@@ -43,11 +44,15 @@ final class RetransmissionQueue
             return null;
         }
 
-        $now = Utils::unixMicro();
-        foreach ($this->queue as $entry) {
+        $now = Utils::unixNano();
+        foreach ($this->queue as $sequenceID => $entry) {
             if ($entry->nack || $now - $entry->timestamp >= RetransmissionQueue::RETRANSMISSION_DELAY) {
-                $entry->nack = false;
                 $entry->timestamp = $now;
+                $entry->nack = false;
+                $entry->attempts++;
+                if ($entry->attempts >= RetransmissionQueue::RETRANSMISSION_ATTEMPTS) {
+                    unset($this->queue[$sequenceID]);
+                }
                 return $entry->payload;
             }
         }
