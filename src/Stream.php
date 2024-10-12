@@ -7,6 +7,7 @@ namespace cooldogedev\spectral;
 use Closure;
 use cooldogedev\spectral\frame\StreamClose;
 use cooldogedev\spectral\frame\StreamData;
+use function array_fill;
 use function count;
 use function floor;
 use function implode;
