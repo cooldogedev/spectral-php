@@ -13,7 +13,6 @@ use cooldogedev\spectral\frame\Pack;
 use cooldogedev\spectral\frame\StreamClose;
 use cooldogedev\spectral\frame\StreamData;
 use function count;
-use function floor;
 use function strlen;
 use function time;
 
@@ -81,7 +80,7 @@ abstract class Connection
             $this->acknowledge();
             $this->retransmit();
         }
-        $this->transmit($now);
+        $this->transmit();
         return true;
     }
 
@@ -168,13 +167,14 @@ abstract class Connection
         return $stream;
     }
 
-    private function transmit(int $now): void
+    private function transmit(): void
     {
         $length = $this->sendQueue->pack();
         if ($length === null || !$this->congestionController->canSend($length)) {
             return;
         }
 
+        $now = Utils::unixNano();
         if ($this->nextTransmission === 0) {
             $delay = $this->pacer->delay($this->rtt->get(), $length, $this->congestionController->getCwnd());
             if ($delay > 0) {
