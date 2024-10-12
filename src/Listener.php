@@ -18,6 +18,8 @@ use function socket_read;
 use function socket_select;
 use function socket_setopt;
 use const AF_INET;
+use const MSG_DONTWAIT;
+use const MSG_WAITALL;
 use const SO_RCVBUF;
 use const SO_SNDBUF;
 use const SOCK_DGRAM;
@@ -136,8 +138,8 @@ final class Listener
         $bytes = "";
         $address = "";
         $port = 0;
-        $received = @socket_recvfrom($this->socket, $bytes, 1500, 0, $address, $port);
-        if ($received === false) {
+        $received = @socket_recvfrom($this->socket, $bytes, 1500, Utils::getOS() !== Utils::OS_WINDOWS ? MSG_DONTWAIT : MSG_WAITALL, $address, $port);
+        if ($received === false || $received === 0) {
             return;
         }
 

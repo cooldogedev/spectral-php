@@ -12,6 +12,8 @@ use cooldogedev\spectral\frame\StreamRequest;
 use cooldogedev\spectral\frame\StreamResponse;
 use function socket_recvfrom;
 use function socket_select;
+use const MSG_DONTWAIT;
+use const MSG_WAITALL;
 
 final class ClientConnection extends Connection
 {
@@ -54,8 +56,8 @@ final class ClientConnection extends Connection
         $bytes = "";
         $address = "";
         $port = "";
-        $received = @socket_recvfrom($this->conn->socket, $bytes, 1500, 0, $address, $port);
-        if ($received === false) {
+        $received = @socket_recvfrom($this->conn->socket, $bytes, 1500, Utils::getOS() !== Utils::OS_WINDOWS ? MSG_DONTWAIT : MSG_WAITALL, $address, $port);
+        if ($received === false || $received === 0) {
             return;
         }
 
