@@ -35,7 +35,7 @@ final class Pacer
             $this->capacity = Pacer::optimalCapacity($rtt, $window);
             $this->tokens = min($this->capacity, $this->tokens);
             $this->window = $window;
-            $this->rate = $window / max($rtt / Pacer::SECOND, 1);
+            $this->rate = 1.25 * $window / max($rtt / Pacer::SECOND, 1);
             $this->rtt = $rtt;
         }
 
