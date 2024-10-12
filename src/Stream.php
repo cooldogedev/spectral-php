@@ -29,6 +29,10 @@ final class Stream
      * @var array<int, array<int, string>>
      */
     public array $splits = [];
+    /**
+     * @var array<int, int>
+     */
+    public array $splitsRemaining = [];
 
     /**
      * @var array<int, Closure(string $payload): void>
@@ -111,13 +115,18 @@ final class Stream
         }
 
         if (!isset($this->splits[$fr->sequenceID])) {
-            $this->splits[$fr->sequenceID] = [];
+            $this->splits[$fr->sequenceID] = array_fill(0, $fr->total, "");
+            $this->splitsRemaining[$fr->sequenceID] = $fr->total;
         }
 
         $this->splits[$fr->sequenceID][$fr->offset] = $fr->payload;
-        if (count($this->splits[$fr->sequenceID]) === $fr->total) {
+        $this->splitsRemaining[$fr->sequenceID]--;
+        if ($this->splitsRemaining[$fr->sequenceID] === 0) {
             $this->handleFull($fr->sequenceID, implode("", $this->splits[$fr->sequenceID]));
-            unset($this->splits[$fr->sequenceID]);
+            unset(
+                $this->splits[$fr->sequenceID],
+                $this->splitsRemaining[$fr->sequenceID],
+            );
         }
     }
 
