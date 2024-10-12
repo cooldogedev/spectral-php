@@ -12,7 +12,9 @@ use function min;
 
 final class Pacer
 {
+    private const DEFAULT_RTT = 100_000_000;
     private const SECOND = 1_000_000_000;
+
     private const MIN_PACING_DELAY = 2_000_000;
     private const MIN_BURST_SIZE = 2;
     private const MAX_BURST_SIZE = 10;
@@ -35,7 +37,7 @@ final class Pacer
             $this->capacity = Pacer::optimalCapacity($rtt, $window);
             $this->tokens = min($this->capacity, $this->tokens);
             $this->window = $window;
-            $this->rate = 1.25 * $window / max($rtt / Pacer::SECOND, 1);
+            $this->rate = Pacer::optimalRate($rtt, $window);
             $this->rtt = $rtt;
         }
 
@@ -64,5 +66,13 @@ final class Pacer
         $rttNs = max($rtt, 1);
         $capacity = (int)floor(($window * Pacer::MIN_PACING_DELAY) / $rttNs);
         return Utils::clamp($capacity, Pacer::MIN_BURST_SIZE * Protocol::MAX_PACKET_SIZE, Pacer::MAX_BURST_SIZE * Protocol::MAX_PACKET_SIZE);
+    }
+
+    private static function optimalRate(int $rtt, int $window): float
+    {
+        if ($rtt === 0) {
+            $rtt = Pacer::DEFAULT_RTT;
+        }
+        return 1.25 * ($window / ($rtt / Pacer::SECOND));
     }
 }
