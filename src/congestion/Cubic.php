@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace cooldogedev\spectral\congestion;
 
 use cooldogedev\spectral\Protocol;
+use function floor;
 use function max;
 use function min;
 use function pow;
@@ -57,8 +58,8 @@ final class Cubic
 
         $elapsed = time() - $this->epochStart;
         $cwnd = (int)floor(Cubic::CUBIC_C * pow($elapsed - $this->k, 3) + $this->wMax);
-        if ($cwnd > 0) {
-            $this->cwnd = min($this->cwnd, Cubic::WINDOW_MAX);
+        if ($cwnd > $this->cwnd) {
+            $this->cwnd = min($cwnd, Cubic::WINDOW_MAX);
         }
     }
 
