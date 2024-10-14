@@ -2,7 +2,7 @@
     "name": "cooldogedev/spectral-php",
     "type": "library",
     "license": "MIT",
-    "version": "0.0.3",
+    "version": "0.0.4",
     "autoload": {
         "psr-4": {
             "cooldogedev\\spectral\\": "src/"
@@ -15,8 +15,9 @@
         }
     ],
     "require": {
-      "ext-encoding": "*",
-      "ext-sockets": "*"
+        "ext-encoding": "*",
+        "ext-sockets": "*",
+        "symfony/filesystem": "^7.1"
     },
     "scripts": {
         "client": "@php example/client.php",

@@ -4,87 +4,88 @@ declare(strict_types=1);
 
 namespace cooldogedev\spectral\congestion;
 
-use cooldogedev\spectral\Protocol;
+use cooldogedev\spectral\util\log\Logger;
+use cooldogedev\spectral\util\Math;
+use cooldogedev\spectral\util\Time;
 use function floor;
 use function max;
-use function min;
 use function pow;
-use function time;
 
-final class Cubic
+final class Cubic extends Controller
 {
-    private const MAX_BURST_PACKETS = 3;
-
-    private const WINDOW_INITIAL = Protocol::MAX_PACKET_SIZE * 32;
-    private const WINDOW_MIN = Protocol::MAX_PACKET_SIZE * 2;
-    private const WINDOW_MAX = Protocol::MAX_PACKET_SIZE * 10000;
-
     private const CUBIC_BETA = 0.7;
     private const CUBIC_C = 0.4;
 
-    private int $cwnd = Cubic::WINDOW_INITIAL;
-    private int $wMax = Cubic::WINDOW_INITIAL;
-    private int $ssthres = Protocol::MAX_BYTE_COUNT;
-    private int $inFlight = 0;
-    private int $epochStart = 0;
-    private float $k = 0.0;
+    private int $window;
+    private float $wMax;
+    private int $ssthres = Math::MAX_INT63;
+    private int $cwndInc = 0;
+    private float $k = 0;
 
-    public function canSend(int $bytes): bool
+    public function __construct(Logger $logger, int $mss)
     {
-        return $this->cwnd - $this->inFlight >= $bytes;
+        parent::__construct($logger, $mss);
+        $this->window = $this->initialWindow();
+        $this->wMax = (float)$this->initialWindow();
     }
 
-    public function onSend(int $bytes): void
+    public function onAck(int $now, int $sent, int $recoveryTime, int $rtt, int $bytes): void
     {
-        $this->inFlight += $bytes;
-    }
-
-    public function onAck(int $bytes): void
-    {
-        $this->inFlight = max($this->inFlight - $bytes, 0);
-        if (!$this->shouldIncreaseWindow()) {
+        if ($this->window < $this->ssthres) {
+            $this->window += $bytes;
+            $this->logger->log("congestion_window_increase", "cause", "slow_start", "window", $this->window);
             return;
         }
 
-        if ($this->ssthres > $this->cwnd) {
-            $this->cwnd = min($this->cwnd + $bytes, Cubic::WINDOW_MAX);
-            return;
+        $t = $now - $recoveryTime;
+        $w = Cubic::wCubic($t+$rtt, $this->wMax, $this->k, $this->mss);
+        $est = Cubic::wEst($t, $rtt, $this->wMax, $this->mss);
+        $cubicCwnd = $this->window;
+        if ($w < $est) {
+            $cubicCwnd = max($cubicCwnd, (int)floor($est));
+        } else if ($cubicCwnd < (int)floor($w)) {
+            $cubicCwnd += (int)floor(($w - $cubicCwnd) / $cubicCwnd * $this->mss);
         }
 
-        if ($this->epochStart === 0) {
-            $this->epochStart = time();
-            $this->k = pow($this->wMax * (1.0 - Cubic::CUBIC_BETA) / Cubic::CUBIC_C, 1/3);
-        }
-
-        $elapsed = time() - $this->epochStart;
-        $cwnd = (int)floor(Cubic::CUBIC_C * pow($elapsed - $this->k, 3) + $this->wMax);
-        if ($cwnd > $this->cwnd) {
-            $this->cwnd = min($cwnd, Cubic::WINDOW_MAX);
+        $this->cwndInc += $cubicCwnd - $this->window;
+        if ($this->cwndInc >= $this->mss) {
+            $this->window += $this->mss;
+            $this->cwndInc = 0;
+            $this->logger->log("congestion_window_increase", "cause", "congestion_avoidance", "window", $this->window);
         }
     }
 
-    public function onLoss(): void
+    public function onCongestionEvent(int $now, int $sent): void
     {
-        $this->inFlight = 0;
-        $this->wMax = $this->cwnd;
-        $this->cwnd = (int)floor(max($this->cwnd*Cubic::CUBIC_BETA, Cubic::WINDOW_MIN));
-        $this->ssthres = $this->cwnd;
-        $this->epochStart = 0;
-        $this->k = pow($this->wMax * (1.0 - Cubic::CUBIC_BETA) / Cubic::CUBIC_C, 1/3);
-    }
-
-    public function getCwnd(): int
-    {
-        return $this->cwnd;
-    }
-
-    private function shouldIncreaseWindow(): bool
-    {
-        if ($this->inFlight >= $this->cwnd) {
-            return true;
+        if ($this->window < $this->wMax) {
+            $this->wMax = $this->window * (1.0 - Cubic::CUBIC_BETA) / 2.0;
+        } else {
+            $this->wMax = $this->window;
         }
-        $availableBytes = $this->cwnd - $this->inFlight;
-        $slowStartLimited = $this->ssthres > $this->cwnd && $this->inFlight > $this->cwnd/2;
-        return $slowStartLimited || $availableBytes <= Cubic::MAX_BURST_PACKETS*Protocol::MAX_PACKET_SIZE;
+        $this->ssthres = max((int)floor($this->wMax * Cubic::CUBIC_BETA), $this->minimumWindow());
+        $this->window = $this->ssthres;
+        $this->k = Cubic::cubicK($this->wMax, $this->mss);
+        $this->cwndInc = (int)floor($this->cwndInc * Cubic::CUBIC_BETA);
+        $this->logger->log("congestion_window_decrease", "window", $this->window);
+    }
+
+    public function getWindow(): int
+    {
+        return $this->window;
+    }
+
+    private static function cubicK(float $wMax, int $mss): float
+    {
+        return pow($wMax / $mss * (1.0 - Cubic::CUBIC_BETA) / Cubic::CUBIC_C, 1 / 3);
+    }
+
+    private static function wCubic(int $t, float $wMax, float $k, int $mss): float
+    {
+        return Cubic::CUBIC_C * (pow(Time::nanosecondsToSeconds($t)-$k, 3) + $wMax/$mss) * $mss;
+    }
+
+    private static function wEst(int $t, int $rtt, float $wMax, int $mss): float
+    {
+        return ($wMax / $mss * Cubic::CUBIC_BETA + 3.0 * (1.0 - Cubic::CUBIC_BETA) / (1.0 + Cubic::CUBIC_BETA) * Time::nanosecondsToSeconds($t) / Time::nanosecondsToSeconds($rtt)) * $mss;
     }
 }

@@ -4,52 +4,50 @@ declare(strict_types=1);
 
 namespace cooldogedev\spectral;
 
-use function count;
-use function sort;
-
 final class AckQueue
 {
-    private int $sequenceID = 0;
-    private int $lastAck = 0;
-
-    private bool $sort = false;
+    private int $max = 0;
+    private int $maxTime = 0;
+    private int $nextAck = 0;
 
     /**
      * @var array<int>
      */
     private array $queue = [];
 
-    public function add(int $sequenceID): void
+    public function add(int $now, int $sequenceID): void
     {
-        $this->sequenceID++;
-        if (!$this->sort && $sequenceID !== $this->sequenceID) {
-            $this->sort = true;
+        $this->queue[] = $sequenceID;
+        if ($sequenceID > $this->max) {
+            $this->max = $sequenceID;
+            $this->maxTime = $now;
         }
-        $this->lastAck = Utils::unixNano();
-        $this->queue[] = $sequenceID;
-    }
 
-    public function addDuplicate(int $sequenceID): void
-    {
-        $this->sort = true;
-        $this->queue[] = $sequenceID;
+        if ($this->nextAck === 0) {
+            $this->nextAck = $now + (Protocol::MAX_ACK_DELAY - Protocol::TIMER_GRANULARITY);
+        }
     }
 
     /**
-     * @return null|array{0: int, 1: array<int>}
+     * @return array{0: array<int>, 1: int, 2: int}|null
      */
-    public function all(): ?array
+    public function flush(int $now): ?array
     {
-        if (count($this->queue) === 0) {
+        if (count($this->queue) === 0 || $this->nextAck > $now) {
             return null;
         }
-
         $queue = $this->queue;
-        if ($this->sort) {
-            sort($queue);
-        }
-        $this->sort = false;
+        $max = $this->max;
+        $delay = $now - $this->maxTime;
         $this->queue = [];
-        return [Utils::unixNano() - $this->lastAck, $queue];
+        $this->max = 0;
+        $this->maxTime = 0;
+        $this->nextAck = 0;
+        return [$queue, $max, $delay];
+    }
+
+    public function clear(): void
+    {
+        $this->queue = [];
     }
 }

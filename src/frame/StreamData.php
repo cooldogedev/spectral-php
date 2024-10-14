@@ -11,17 +11,13 @@ final class StreamData extends Frame
 {
     public int $streamID;
     public int $sequenceID;
-    public int $total;
-    public int $offset;
     public string $payload;
 
-    public static function create(int $streamID, int $sequenceID, int $total, int $offset, string $payload): StreamData
+    public static function create(int $streamID, int $sequenceID, string $payload): StreamData
     {
         $fr = new StreamData();
         $fr->streamID = $streamID;
         $fr->sequenceID = $sequenceID;
-        $fr->total = $total;
-        $fr->offset = $offset;
         $fr->payload = $payload;
         return $fr;
     }
@@ -35,8 +31,6 @@ final class StreamData extends Frame
     {
         $buf->writeSignedLongLE($this->streamID);
         $buf->writeUnsignedIntLE($this->sequenceID);
-        $buf->writeUnsignedIntLE($this->total);
-        $buf->writeUnsignedIntLE($this->offset);
         $buf->writeUnsignedIntLE(strlen($this->payload));
         $buf->writeByteArray($this->payload);
     }
@@ -45,8 +39,6 @@ final class StreamData extends Frame
     {
         $this->streamID = $buf->readSignedLongLE();
         $this->sequenceID = $buf->readUnsignedIntLE();
-        $this->total = $buf->readUnsignedIntLE();
-        $this->offset = $buf->readUnsignedIntLE();
         $this->payload = $buf->readByteArray($buf->readUnsignedIntLE());
     }
 }

@@ -4,75 +4,67 @@ declare(strict_types=1);
 
 namespace cooldogedev\spectral\congestion;
 
-use cooldogedev\spectral\Protocol;
-use cooldogedev\spectral\Utils;
+use cooldogedev\spectral\util\Math;
+use cooldogedev\spectral\util\Time;
 use function floor;
 use function max;
 use function min;
 
 final class Pacer
 {
-    private const DEFAULT_RTT = 100_000_000;
-    private const SECOND = 1_000_000_000;
+    private const BURST_INTERVAL_NANOSECONDS = Time::MILLISECOND * 2;
+    private const MIN_BURST_SIZE = 10;
+    private const MAX_BURST_SIZE = 256;
 
-    private const MIN_PACING_DELAY = 2_000_000;
-    private const MIN_BURST_SIZE = 2;
-    private const MAX_BURST_SIZE = 10;
-
-    private int $prev;
     private int $capacity = 0;
     private int $tokens = 0;
+    private int $mss = 0;
     private int $window = 0;
-    private int $rtt = 0;
-    private float $rate = 0.0;
+    private int $prev;
 
     public function __construct()
     {
-        $this->prev = Utils::unixNano();
+        $this->prev = Time::unixNano();
     }
 
-    public function delay(int $rtt, int $length, int $window): int
+    public function delay(int $now, int $rtt, int $bytes, int $mss, int $window): int
     {
-        if ($window !== $this->window || $rtt !== $this->rtt) {
-            $this->capacity = Pacer::optimalCapacity($rtt, $window);
-            $this->tokens = min($this->capacity, $this->tokens);
+        if ($mss !== $this->mss || $window !== $this->window) {
+            $this->capacity = Pacer::optimalCapacity($rtt, $mss, $window);
+            $this->tokens = min($this->tokens, $this->capacity);
+            $this->mss = $mss;
             $this->window = $window;
-            $this->rate = Pacer::optimalRate($rtt, $window);
-            $this->rtt = $rtt;
         }
 
-        if ($this->tokens >= $length) {
+        if ($this->tokens >= $bytes) {
             return 0;
         }
 
-        $now = Utils::unixNano();
-        $newTokens = (int)floor($this->rate * (($now - $this->prev) / Pacer::SECOND));
-        $this->tokens = min($this->tokens + $newTokens, $this->capacity);
+        if ($window >= Math::MAX_UINT32) {
+            return 0;
+        }
+
+        $elapsed = $now - $this->prev;
+        $elapsedRTT = Time::nanosecondsToSeconds($elapsed) / Time::nanosecondsToSeconds(max($rtt, 1));
+        $newTokens = $window * 1.25 * $elapsedRTT;
+        $this->tokens = min($this->tokens + (int)floor($newTokens), $this->capacity);
         $this->prev = $now;
-        if ($this->tokens >= $length) {
+        if ($this->tokens >= $bytes) {
             return 0;
         }
-        $delay = (int)floor(($length - $this->tokens) / ($this->rate * Pacer::SECOND));
-        return max($delay, Pacer::MIN_PACING_DELAY);
+        $unscaledDelay = $rtt * (min($bytes, $this->capacity) - $this->tokens) / $window;
+        return $this->prev + (int)floor(($unscaledDelay / 5) * 4);
     }
 
-    public function onSend(int $length): void
+    public function onSend(int $bytes): void
     {
-        $this->tokens = max($this->tokens - $length, 0);
+        $this->tokens = max($this->tokens - $bytes, 0);
     }
 
-    private static function optimalCapacity(int $rtt, int $window): int
+    private static function optimalCapacity(int $rtt, int $mss, int $window): int
     {
         $rttNs = max($rtt, 1);
-        $capacity = (int)floor(($window * Pacer::MIN_PACING_DELAY) / $rttNs);
-        return Utils::clamp($capacity, Pacer::MIN_BURST_SIZE * Protocol::MAX_PACKET_SIZE, Pacer::MAX_BURST_SIZE * Protocol::MAX_PACKET_SIZE);
-    }
-
-    private static function optimalRate(int $rtt, int $window): float
-    {
-        if ($rtt === 0) {
-            $rtt = Pacer::DEFAULT_RTT;
-        }
-        return 1.25 * ($window / ($rtt / Pacer::SECOND));
+        $capacity = (int)floor(($window * Pacer::BURST_INTERVAL_NANOSECONDS) / $rttNs);
+        return Math::clamp($capacity, Pacer::MIN_BURST_SIZE * $mss, Pacer::MAX_BURST_SIZE * $mss);
     }
 }

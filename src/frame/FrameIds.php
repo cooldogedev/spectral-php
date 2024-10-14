@@ -16,4 +16,7 @@ interface FrameIds
     public const STREAM_RESPONSE = 5;
     public const STREAM_DATA = 6;
     public const STREAM_CLOSE = 7;
+
+    public const MTU_REQUEST = 8;
+    public const MTU_RESPONSE = 9;
 }

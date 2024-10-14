@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace cooldogedev\spectral;
 
+use cooldogedev\spectral\util\Address;
 use Socket;
 use function socket_close;
 use function socket_sendto;
@@ -18,10 +19,10 @@ final readonly class Conn
         public bool $closable,
     ) {}
 
-    public function write(string $data): ?int
+    public function write(string $data): bool
     {
         $written = @socket_sendto($this->socket, $data, strlen($data), 0, $this->remoteAddress->address, $this->remoteAddress->port);
-        return $written !== false ? $written : null;
+        return $written !== false && $written > 0;
     }
 
     public function close(): void

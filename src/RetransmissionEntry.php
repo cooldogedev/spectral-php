@@ -8,8 +8,7 @@ final class RetransmissionEntry
 {
     public function __construct(
         public string $payload,
-        public int    $timestamp,
+        public int    $sent,
         public int    $attempts = 0,
-        public bool   $nack = false,
     ) {}
 }

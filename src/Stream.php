@@ -5,52 +5,35 @@ declare(strict_types=1);
 namespace cooldogedev\spectral;
 
 use Closure;
-use cooldogedev\spectral\frame\StreamClose;
+use cooldogedev\spectral\frame\Pack;
 use cooldogedev\spectral\frame\StreamData;
-use function array_fill;
-use function count;
-use function floor;
-use function implode;
-use function min;
-use function strlen;
-use function substr;
+use cooldogedev\spectral\util\log\Logger;
+use function str_split;
 
 final class Stream
 {
-    public const MAX_PAYLOAD_SIZE = 128;
-
-    public int $sequenceID = 0;
-    public int $expectedSequenceID = 0;
-
-    /**
-     * @var array<int, string>
-     */
-    public array $ordered = [];
-    /**
-     * @var array<int, array<int, string>>
-     */
-    public array $splits = [];
-    /**
-     * @var array<int, int>
-     */
-    public array $splitsRemaining = [];
+    private int $sequenceID = 0;
 
     /**
      * @var array<int, Closure(string $payload): void>
      */
-    public array $readers = [];
+    private array $readers = [];
     /**
      * @var array<int, Closure(): void>
      */
-    public array $closeHandlers = [];
+    private array $closeHandlers = [];
 
-    public bool $closed = false;
+    private FrameQueue $frameQueue;
+
+    private bool $closed = false;
 
     public function __construct(
-        private readonly Connection $connection,
-        private readonly StreamMap $map,
-        private readonly int $streamID,
-    ) {}
+        private readonly SendQueue  $sendQueue,
+        private readonly Logger     $logger,
+        private readonly int        $streamID,
+    ) {
+        $this->frameQueue = new FrameQueue();
+    }
 
     /**
      * @param Closure(string $payload): void $reader
@@ -65,33 +48,25 @@ final class Stream
         $this->closeHandlers[] = $handler;
     }
 
-    public function write(string $payload): void
+    public function write(string $p): void
     {
-        $sequenceID = $this->sequenceID;
-        $this->sequenceID++;
-        if (strlen($payload) <= Stream::MAX_PAYLOAD_SIZE) {
-            $this->connection->write(StreamData::create($this->streamID, $sequenceID, 0, 0, $payload));
+        if ($this->closed) {
             return;
         }
 
-        $length = strlen($payload);
-        $total = (int)floor(($length + Stream::MAX_PAYLOAD_SIZE - 1) / Stream::MAX_PAYLOAD_SIZE);
-        for ($i = 0; $i < $total; $i++) {
-            $start = $i * Stream::MAX_PAYLOAD_SIZE;
-            $end = min($start + Stream::MAX_PAYLOAD_SIZE, $length);
-            $this->connection->write(StreamData::create(
-                streamID: $this->streamID,
-                sequenceID: $sequenceID,
-                total: $total,
-                offset: $i,
-                payload: substr($payload, $start, $end - $start),
-            ));
+        $fr = StreamData::create($this->streamID, 0, "");
+        $payload = str_split($p, $this->sendQueue->getMSS() - 20);
+        foreach ($payload as $chunk) {
+            $fr->sequenceID = $this->sequenceID;
+            $fr->payload = $chunk;
+            $this->sendQueue->add(Pack::packSingle($fr));
+            $this->sequenceID++;
         }
     }
 
     public function close(): void
     {
-        $this->connection->write(StreamClose::create($this->streamID));
+        $this->logger->log("stream_close_application", "streamID", $this->streamID);
         $this->internalClose();
     }
 
@@ -104,64 +79,22 @@ final class Stream
             $this->readers = [];
             $this->closeHandlers = [];
             $this->closed = true;
-            $this->map->remove($this->streamID);
+            $this->frameQueue->clear();
+            $this->logger->log("stream_close", "streamID", $this->streamID);
         }
     }
 
     public function receive(StreamData $fr): void
     {
-        if ($fr->total <= 0) {
-            $this->handleFull($fr->sequenceID, $fr->payload);
+        if ($this->closed) {
             return;
         }
 
-        if (!isset($this->splits[$fr->sequenceID])) {
-            $this->splits[$fr->sequenceID] = array_fill(0, $fr->total, "");
-            $this->splitsRemaining[$fr->sequenceID] = $fr->total;
-        }
-
-        $this->splits[$fr->sequenceID][$fr->offset] = $fr->payload;
-        $this->splitsRemaining[$fr->sequenceID]--;
-        if ($this->splitsRemaining[$fr->sequenceID] === 0) {
-            $this->handleFull($fr->sequenceID, implode("", $this->splits[$fr->sequenceID]));
-            unset(
-                $this->splits[$fr->sequenceID],
-                $this->splitsRemaining[$fr->sequenceID],
-            );
-        }
-    }
-
-    private function handleFull(int $sequenceID, string $payload): void
-    {
-        if ($sequenceID !== $this->expectedSequenceID) {
-            $this->ordered[$sequenceID] = $payload;
-            return;
-        }
-
-        $this->expectedSequenceID++;
-        if (count($this->ordered) > 0) {
-            $this->order();
-        }
-        $this->onRead($payload);
-    }
-
-    private function order(): void
-    {
-        while (true) {
-            $nextPayload = $this->ordered[$this->expectedSequenceID] ?? null;
-            if ($nextPayload === null) {
-                break;
+        $this->frameQueue->enqueue($fr->payload, $fr->sequenceID);
+        while (($payload = $this->frameQueue->dequeue()) !== null) {
+            foreach ($this->readers as $reader) {
+                $reader($payload);
             }
-            unset($this->ordered[$this->expectedSequenceID]);
-            $this->expectedSequenceID++;
-            $this->onRead($nextPayload);
-        }
-    }
-
-    private function onRead(string $payload): void
-    {
-        foreach ($this->readers as $reader) {
-            $reader($payload);
         }
     }
 }

@@ -4,48 +4,64 @@ declare(strict_types=1);
 
 namespace cooldogedev\spectral;
 
-use cooldogedev\spectral\congestion\Cubic;
 use cooldogedev\spectral\congestion\Pacer;
+use cooldogedev\spectral\congestion\Sender;
 use cooldogedev\spectral\frame\Acknowledgement;
 use cooldogedev\spectral\frame\ConnectionClose;
 use cooldogedev\spectral\frame\Frame;
+use cooldogedev\spectral\frame\MTURequest;
+use cooldogedev\spectral\frame\MTUResponse;
 use cooldogedev\spectral\frame\Pack;
 use cooldogedev\spectral\frame\StreamClose;
 use cooldogedev\spectral\frame\StreamData;
-use function count;
+use cooldogedev\spectral\util\Address;
+use cooldogedev\spectral\util\log\Logger;
+use cooldogedev\spectral\util\RTT;
+use cooldogedev\spectral\util\Time;
+use function array_chunk;
 use function strlen;
-use function time;
 
 abstract class Connection
 {
+    private const CONNECTION_ACTIVITY_TIMEOUT = Time::SECOND * 30;
+
     protected readonly AckQueue $ack;
-    protected readonly Cubic $congestionController;
+    protected readonly Sender $sender;
     protected readonly Pacer $pacer;
+    protected readonly ReceiveQueue $receiveQueue;
     protected readonly RetransmissionQueue $retransmission;
     protected readonly SendQueue $sendQueue;
     protected readonly StreamMap $streams;
     protected readonly RTT $rtt;
+    protected readonly MTUDiscovery $discovery;
 
-    protected int $lastActivity = 0;
-    protected int $lastTick = 0;
-    protected int $nextTransmission = 0;
+    public readonly Logger $logger;
 
-    /**
-     * @var array<int, int>
-     */
-    protected array $received = [];
+    protected int $sequenceID = 0;
+    protected int $idle = 0;
+    protected int $mss = MTUDiscovery::MTU_MIN;
+
     protected bool $closed = false;
 
-    public function __construct(protected readonly Conn $conn, public int $connectionID)
+    public function __construct(protected readonly Conn $conn, public int $connectionID, int $perspective)
     {
+        $now = Time::unixNano();
+        $this->logger = Logger::create($perspective);
         $this->ack = new AckQueue();
-        $this->congestionController = new Cubic();
+        $this->sender = new Sender($this->logger, $now, MTUDiscovery::MTU_MIN);
         $this->pacer = new Pacer();
+        $this->receiveQueue = new ReceiveQueue();
         $this->retransmission = new RetransmissionQueue();
-        $this->sendQueue = new SendQueue($this->connectionID);
+        $this->sendQueue = new SendQueue();
         $this->streams = new StreamMap();
         $this->rtt = new RTT();
-        $this->lastActivity = Utils::unixMilli();
+        $this->discovery = new MTUDiscovery(function (int $mtu): void {
+            $this->logger->log("mtu_update", "old", $this->mss, "new", $mtu);
+            $this->mss = $mtu;
+            $this->sender->setMSS($mtu);
+            $this->sendQueue->setMSS($mtu);
+        });
+        $this->idle = $now + Connection::CONNECTION_ACTIVITY_TIMEOUT;
     }
 
     public function getLocalAddress(): Address
@@ -60,7 +76,8 @@ abstract class Connection
 
     public function closeWithError(int $code, string $message): void
     {
-        $this->write(ConnectionClose::create($code, $message));
+        $this->logger->log("connection_close_err", "code", $code, "message", $message);
+        $this->writeControl(ConnectionClose::create($code, $message), true);
         $this->internalClose();
     }
 
@@ -70,17 +87,13 @@ abstract class Connection
             return false;
         }
 
-        $now = Utils::unixMilli();
-        if ($now - $this->lastTick >= 80) {
-            if ($now - $this->lastActivity > 30_000) {
-                $this->closeWithError(ConnectionClose::CONNECTION_CLOSE_TIMEOUT, "closed due to inactivity");
-                return false;
-            }
-
-            $this->acknowledge();
-            $this->retransmit();
+        $now = Time::unixNano();
+        if ($now >= $this->idle) {
+            $this->closeWithError(ConnectionClose::CONNECTION_CLOSE_TIMEOUT, "network inactivity");
+            return false;
         }
-        $this->transmit();
+        $this->retransmit($now);
+        $this->maybeSend($now);
         return true;
     }
 
@@ -90,56 +103,50 @@ abstract class Connection
      */
     public function receive(int $sequenceID, array $frames): void
     {
-        if (isset($this->received[$sequenceID])) {
-            $this->ack->addDuplicate($sequenceID);
-            return;
+        $now = Time::unixNano();
+        if ($sequenceID !== 0) {
+            $this->ack->add($now, $sequenceID);
+            if (!$this->receiveQueue->add($sequenceID)) {
+                $this->logger->log("duplicate_receive", "sequenceID", $sequenceID);
+                return;
+            }
         }
 
         foreach ($frames as $frame) {
-            $this->handle($frame);
+            $this->handle($now, $frame);
         }
-
-        if ($sequenceID !== 0) {
-            $this->ack->add($sequenceID);
-            $this->received[$sequenceID] = time();
-        }
-        $this->lastActivity = Utils::unixMilli();
+        $this->idle = $now + Connection::CONNECTION_ACTIVITY_TIMEOUT;
     }
 
     /**
      * @internal
      */
-    public function handle(Frame $fr): void
+    public function handle(int $now, Frame $fr): void
     {
         if ($fr instanceof Acknowledgement) {
-            $ackedBytes = 0;
-            foreach ($fr->ranges as $i => [$start, $end]) {
-                for ($j = $start; $j <= $end; $j++) {
-                    $entry = $this->retransmission->remove($j);
+            foreach ($fr->ranges as [$start, $end]) {
+                for ($i = $start; $i <= $end; $i++) {
+                    $entry = $this->retransmission->remove($i);
                     if ($entry !== null) {
-                        $ackedBytes += strlen($entry->payload);
-                        if ($i === count($fr->ranges) - 1 && $j === $end) {
-                            $this->rtt->add(Utils::unixNano() - $entry->timestamp - $fr->delay);
+                        $this->sender->onAck($now, $entry->sent, $this->rtt->getSRTT(), strlen($entry->payload));
+                        if ($i === $fr->max) {
+                            $this->rtt->add(Time::unixNano() - $entry->sent, $fr->delay);
                         }
                     }
                 }
             }
+        }
 
-            if ($ackedBytes > 0) {
-                $this->congestionController->onAck($ackedBytes);
-            }
-
-            if ($fr->type === Acknowledgement::ACKNOWLEDGEMENT_WITH_GAPS) {
-                foreach (Acknowledgement::generateAcknowledgementGaps($fr->ranges) as $sequenceID) {
-                    $this->retransmission->nack($sequenceID);
-                }
-            }
+        if ($fr instanceof StreamClose) {
+            $this->logger->log("stream_close_request", "streamID", $fr->streamID);
+            $this->streams->get($fr->streamID)?->internalClose();
         }
 
         match (true) {
             $fr instanceof ConnectionClose => $this->internalClose(),
             $fr instanceof StreamData => $this->streams->get($fr->streamID)?->receive($fr),
-            $fr instanceof StreamClose => $this->streams->get($fr->streamID)?->internalClose(),
+            $fr instanceof MTURequest => $this->writeControl(MTUResponse::create($fr->mtu)),
+            $fr instanceof MTUResponse => $this->discovery->onAck($fr->mtu),
             default => null,
         };
     }
@@ -147,68 +154,98 @@ abstract class Connection
     /**
      * @internal
      */
-    public function write(Frame $fr): void
+    public function writeControl(Frame $fr, bool $needsAck = false): void
     {
-        $this->sendQueue->add(Pack::packSingle($fr));
-    }
+        $payload = Pack::packSingle($fr);
+        $sequenceID = 0;
+        if ($needsAck) {
+            $this->sequenceID++;
+            $sequenceID = $this->sequenceID;
+        }
 
-    protected function writeImmediately(Frame $fr): void
-    {
-        $this->conn->write(Pack::pack($this->connectionID, 0, 1, Pack::packSingle($fr)));
+        $pk = Pack::pack($this->connectionID, $sequenceID, 1, $payload);
+        if ($needsAck) {
+            $this->retransmission->add(Time::unixNano(), $sequenceID, $pk);
+        }
+        $this->conn->write($pk);
     }
 
     protected function createStream(int $streamID): ?Stream
     {
         if ($this->streams->get($streamID) !== null) {
+            $this->logger->log("duplicate_stream", "streamID", $streamID);
             return null;
         }
-        $stream = new Stream($this, $this->streams, $streamID);
+        $stream = new Stream($this->sendQueue, $this->logger, $streamID);
+        $stream->registerCloseHandler(function () use ($streamID): void {
+            $this->streams->remove($this->sequenceID);
+            $this->writeControl(StreamClose::create($streamID), true);
+        });
         $this->streams->add($stream, $streamID);
         return $stream;
     }
 
-    private function transmit(): void
+    private function maybeSend(int $now): void
     {
-        $length = $this->sendQueue->pack();
-        if ($length === null || !$this->congestionController->canSend($length)) {
-            return;
+        if (!$this->discovery->discovered && $this->discovery->sendProbe($now, $this->rtt->getSRTT())) {
+            $this->writeControl(MTURequest::create($this->discovery->current));
+            $this->logger->log("mtu_probe", "old", $this->mss, "new", $this->discovery->current);
         }
 
-        $now = Utils::unixNano();
-        if ($this->nextTransmission === 0) {
-            $delay = $this->pacer->delay($this->rtt->get(), $length, $this->congestionController->getCwnd());
-            if ($delay > 0) {
-                $this->nextTransmission = $now + $delay;
-                return;
+        while ($this->sendQueue->available()) {
+            if (!$this->transmit($now)) {
+                break;
             }
-        } else if ($this->nextTransmission > $now) {
-            return;
         }
-        [$sequenceID, $pk] = $this->sendQueue->flush();
-        $this->congestionController->onSend(strlen($pk));
-        $this->pacer->onSend(strlen($pk));
-        $this->retransmission->add($sequenceID, $pk);
+        $this->acknowledge($now);
+    }
+
+    private function transmit(int $now): bool
+    {
+        [$total, $payload] = $this->sendQueue->pack($this->sender->getAvailable());
+        if ($total === 0) {
+            $this->logger->log("congestion_blocked");
+            return false;
+        }
+
+        $length = strlen($payload);
+        $delay = $this->pacer->delay($now, $this->rtt->getSRTT(), $length, $this->mss, $this->sender->getWindow());
+        if ($delay > $now) {
+            $this->logger->log("pacer_block", "len", $length, "delay", $now - $delay);
+            return false;
+        }
+
+        $this->sequenceID++;
+        $pk = Pack::pack($this->connectionID, $this->sequenceID, $total, $payload);
+        $this->sendQueue->flush();
         $this->conn->write($pk);
-        $this->nextTransmission = 0;
+        $this->sender->onSend($length);
+        $this->pacer->onSend($length);
+        $this->retransmission->add($now, $this->sequenceID, $pk);
+        return true;
     }
 
-    private function acknowledge(): void
+    private function acknowledge(int $now): void
     {
-        $result = $this->ack->all();
-        if ($result === null) {
-            return;
+        $result = $this->ack->flush($now);
+        if ($result !== null) {
+            [$queue, $max, $delay] = $result;
+            $ranges = Acknowledgement::generateAcknowledgementRanges($queue);
+            $fr = Acknowledgement::create($delay, $max, []);
+            foreach (array_chunk($ranges, 128) as $chunk) {
+                $fr->ranges = $chunk;
+                $this->writeControl($fr);
+            }
         }
-        [$delay, $queue] = $result;
-        [$type, $ranges] = Acknowledgement::generateAcknowledgementRange($queue);
-        $this->writeImmediately(Acknowledgement::create($type, $delay, $ranges));
     }
 
-    private function retransmit(): void
+    private function retransmit(int $now): void
     {
-        $entry = $this->retransmission->shift();
+        $entry = $this->retransmission->shift($now, $this->rtt->getRTO());
         if ($entry !== null) {
-            $this->congestionController->onLoss();
-            $this->conn->write($entry);
+            [$sentTime, $payload] = $entry;
+            $this->sender->onCongestionEvent($now, $sentTime);
+            $this->conn->write($payload);
         }
     }
 
@@ -221,7 +258,14 @@ abstract class Connection
         foreach ($this->streams->all() as $stream) {
             $stream->internalClose();
         }
+        $this->discovery->mtuIncrease = null;
+        $this->logger->log("connection_close");
+        $this->logger->close();
         $this->closed = true;
+        $this->ack->clear();
+        $this->receiveQueue->clear();
+        $this->retransmission->clear();
+        $this->sendQueue->clear();
         $this->conn->close();
     }
 }

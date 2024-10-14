@@ -4,30 +4,38 @@ declare(strict_types=1);
 
 namespace cooldogedev\spectral;
 
-use cooldogedev\spectral\frame\Pack;
 use pmmp\encoding\ByteBuffer;
 use function array_shift;
 use function count;
+use function min;
 use function strlen;
 
 final class SendQueue
 {
-    private const PACKET_SIZE = Protocol::MAX_PACKET_SIZE - Protocol::PACKET_HEADER_SIZE;
-
-    private int $sequenceID = 0;
-    private int $total = 0;
-
-    private ByteBuffer $buf;
-
-    /**
-     * @var array<int, string>
-     */
     private array $queue = [];
+    private int $total = 0;
+    private int $mss = MTUDiscovery::MTU_MIN;
+    private ByteBuffer $pk;
 
-    public function __construct(public int $connectionID)
+    public function __construct()
     {
-        $this->buf = new ByteBuffer();
-        $this->buf->reserve(SendQueue::PACKET_SIZE);
+        $this->pk = new ByteBuffer();
+        $this->pk->reserve(MTUDiscovery::MTU_MAX);
+    }
+
+    public function available(): bool
+    {
+        return count($this->queue) > 0 || $this->total > 0;
+    }
+
+    public function getMSS(): int
+    {
+        return $this->mss;
+    }
+
+    public function setMSS(int $mss): void
+    {
+        $this->mss = $mss;
     }
 
     public function add(string $payload): void
@@ -35,36 +43,37 @@ final class SendQueue
         $this->queue[] = $payload;
     }
 
-    public function pack(): ?int
+    public function pack(int $window): ?array
     {
-        if ($this->total > 0) {
-            return $this->buf->getUsedLength();
-        }
-
-        if (count($this->queue) === 0) {
+        if (count($this->queue) === 0 && $this->total === 0) {
             return null;
         }
 
+        $size = min($window, $this->mss);
         while (count($this->queue) > 0) {
-            if ($this->buf->getUsedLength() + strlen($this->queue[0]) > SendQueue::PACKET_SIZE) {
+            $entry = $this->queue[0];
+            if ($this->pk->getUsedLength() + strlen($entry) > $size) {
                 break;
             }
+            array_shift($this->queue);
+            $this->pk->writeByteArray($entry);
             $this->total++;
-            $this->buf->writeByteArray(array_shift($this->queue));
         }
-        return $this->buf->getUsedLength();
+        return [$this->total, $this->pk->toString()];
     }
 
-    public function flush(): ?array
+    public function flush(): void
     {
-        if ($this->total === 0) {
-            return null;
-        }
-        $this->sequenceID++;
-        $packet = Pack::pack($this->connectionID, $this->sequenceID, $this->total, $this->buf->toString());
+        $this->pk->clear();
+        $this->pk->setReadOffset(0);
+        $this->pk->setWriteOffset(0);
         $this->total = 0;
-        $this->buf->clear();
-        $this->buf->setWriteOffset(0);
-        return [$this->sequenceID, $packet];
+    }
+
+    public function clear(): void
+    {
+        $this->pk->clear();
+        $this->pk->trim();
+        $this->queue = [];
     }
 }

@@ -60,7 +60,6 @@ final class Pack
     {
         if (Pack::$buf === null) {
             Pack::$buf = new ByteBuffer();
-            Pack::$buf->reserve(Protocol::MAX_PACKET_SIZE);
         }
         Pack::$buf->setReadOffset(0);
         Pack::$buf->setWriteOffset(0);

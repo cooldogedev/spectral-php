@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace cooldogedev\spectral;
+namespace cooldogedev\spectral\util;
 
 final readonly class Address
 {
