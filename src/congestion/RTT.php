@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace cooldogedev\spectral\util;
+namespace cooldogedev\spectral\congestion;
 
 use cooldogedev\spectral\Protocol;
-use function abs;
+use cooldogedev\spectral\util\Time;
 use function floor;
 use function max;
 use function min;
@@ -14,15 +14,21 @@ final class RTT
 {
     private const INITIAL_RTT = Time::MILLISECOND * 333;
 
-    private int $minRTT = -1;
+    private bool $measured = false;
+    private int $minRTT = RTT::INITIAL_RTT;
     private int $latestRTT = 0;
     private int $smoothedRTT = RTT::INITIAL_RTT;
     private int $rttVar = RTT::INITIAL_RTT / 2;
 
     public function add(int $latestRTT, int $ackDelay): void
     {
+        if ($latestRTT <= 0) {
+            return;
+        }
+
         $this->latestRTT = $latestRTT;
-        if ($latestRTT < 0) {
+        if (!$this->measured) {
+            $this->measured = true;
             $this->minRTT = $latestRTT;
             $this->smoothedRTT = $latestRTT;
             $this->rttVar = (int)floor($latestRTT / 2);
@@ -30,15 +36,22 @@ final class RTT
         }
 
         $this->minRTT = min($this->minRTT, $latestRTT);
-        $adjustedRTT = $latestRTT - min($ackDelay, Protocol::MAX_ACK_DELAY);
-        if ($adjustedRTT < $this->minRTT) {
-            $adjustedRTT = $this->latestRTT;
+        $ackDelay = min($ackDelay, Protocol::MAX_ACK_DELAY);
+        $adjustedRTT = $latestRTT;
+        if ($latestRTT >= $this->minRTT + $ackDelay) {
+            $adjustedRTT -= $ackDelay;
         }
+
+        if ($this->smoothedRTT > $adjustedRTT) {
+            $rttSample = $this->smoothedRTT - $adjustedRTT;
+        } else {
+            $rttSample = $adjustedRTT - $this->smoothedRTT;
+        }
+        $this->rttVar = (int)floor(((3 * $this->rttVar) + $rttSample) / 4);
         $this->smoothedRTT = (int)floor(((7 * $this->smoothedRTT) + $adjustedRTT) / 8);
-        $this->rttVar = (int)floor(((3 * $this->rttVar) + abs($this->smoothedRTT - $adjustedRTT)) / 4);
     }
 
-    public function getRTT(): int
+    public function getLatestRTT(): int
     {
         return $this->latestRTT;
     }

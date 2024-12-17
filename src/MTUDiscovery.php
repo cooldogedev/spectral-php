@@ -10,14 +10,12 @@ use function min;
 
 final class MTUDiscovery
 {
-    public const MTU_MIN = 1200;
-    public const MTU_MAX = 1452;
-    public const MTU_DIFF = 20;
+    private const MTU_DIFF = 20;
 
     private const PROBE_DELAY = 5;
     private const PROBE_ATTEMPTS = 3;
 
-    public int $current = MTUDiscovery::MTU_MIN;
+    public int $current = Protocol::MIN_PACKET_SIZE;
     public int $flight = 0;
     public int $prev;
 
@@ -58,11 +56,11 @@ final class MTUDiscovery
 
     private function discover(): void
     {
-        if ($this->current >= MTUDiscovery::MTU_MAX) {
+        if ($this->current >= Protocol::MAX_PACKET_SIZE) {
             $this->discovered = true;
             return;
         }
         $this->flight = 0;
-        $this->current = min($this->current + MTUDiscovery::MTU_DIFF, MTUDiscovery::MTU_MAX);
+        $this->current = min($this->current + MTUDiscovery::MTU_DIFF, Protocol::MAX_PACKET_SIZE);
     }
 }

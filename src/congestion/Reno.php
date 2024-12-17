@@ -23,23 +23,26 @@ final class Reno extends Controller
         $this->window = $this->initialWindow();
     }
 
-    public function onAck(int $now, int $sent, int $recoveryTime, int $rtt, int $bytes): void
+    public function onAck(int $now, int $sent, int $recoveryTime, RTT $rtt, int $bytes, int $flight): void
     {
-        if ($this->window < $this->ssthres) {
-            $this->window += $bytes;
-            $this->logger->log("congestion_window_increase", "cause", "slow_start", "window", $this->window);
-            if ($this->window >= $this->ssthres) {
-                $this->bytesAcked = $this->window - $this->ssthres;
-                $this->logger->log("congestion_exist_slow_start", "window", $this->window, "threshold", $this->ssthres);
-            }
+        if (!$this->shouldIncreaseWindow($flight, $this->ssthres, $this->window)) {
             return;
         }
 
-        $this->bytesAcked += $bytes;
-        if ($this->bytesAcked >= $this->window) {
-            $this->bytesAcked -= $this->window;
+        if ($this->window < $this->ssthres) {
             $this->window += $this->mss;
-            $this->logger->log("congestion_window_increase", "cause", "congestion_avoidance", "window", $this->window, "acked", $this->bytesAcked);
+            $this->logger->log("congestion_window_increase", "cause", "slow_start", "window", $this->window, "ssthres", $this->ssthres);
+            if ($this->window >= $this->ssthres) {
+                $this->ssthres = $this->window;
+                $this->logger->log("congestion_exist_slow_start", "window", $this->window, "ssthres", $this->ssthres);
+            }
+        } else {
+            $this->bytesAcked += $bytes;
+            if ($this->bytesAcked >= $this->window) {
+                $this->bytesAcked -= $this->window;
+                $this->window += $this->mss;
+                $this->logger->log("congestion_window_increase", "cause", "congestion_avoidance", "window", $this->window, "ssthres", $this->ssthres, "acked", $this->bytesAcked);
+            }
         }
     }
 
@@ -47,8 +50,15 @@ final class Reno extends Controller
     {
         $this->window = (int)floor($this->window * Reno::LOSS_REDUCTION_FACTOR);
         $this->window = max($this->window, $this->minimumWindow());
+        $this->bytesAcked = (int)floor($this->window * Reno::LOSS_REDUCTION_FACTOR);
         $this->ssthres = $this->window;
-        $this->logger->log("congestion_window_decrease", "window", $this->window);
+        $this->logger->log("congestion_window_decrease", "window", $this->window, "ssthres", $this->ssthres);
+    }
+
+    public function setMSS(int $mss): void
+    {
+        $this->mss = $mss;
+        $this->window = max($this->window, $this->minimumWindow());
     }
 
     public function getWindow(): int

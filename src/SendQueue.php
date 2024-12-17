@@ -14,13 +14,13 @@ final class SendQueue
 {
     private array $queue = [];
     private int $total = 0;
-    private int $mss = MTUDiscovery::MTU_MIN;
+    private int $mss = Protocol::MIN_PACKET_SIZE;
     private ByteBuffer $pk;
 
     public function __construct()
     {
         $this->pk = new ByteBuffer();
-        $this->pk->reserve(MTUDiscovery::MTU_MAX);
+        $this->pk->reserve(Protocol::MAX_PACKET_SIZE);
     }
 
     public function available(): bool

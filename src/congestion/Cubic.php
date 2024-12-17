@@ -29,7 +29,7 @@ final class Cubic extends Controller
         $this->wMax = (float)$this->initialWindow();
     }
 
-    public function onAck(int $now, int $sent, int $recoveryTime, int $rtt, int $bytes): void
+    public function onAck(int $now, int $sent, int $recoveryTime, RTT $rtt, int $bytes, int $flight): void
     {
         if ($this->window < $this->ssthres) {
             $this->window += $bytes;
@@ -38,8 +38,8 @@ final class Cubic extends Controller
         }
 
         $t = $now - $recoveryTime;
-        $w = Cubic::wCubic($t+$rtt, $this->wMax, $this->k, $this->mss);
-        $est = Cubic::wEst($t, $rtt, $this->wMax, $this->mss);
+        $w = Cubic::wCubic($t + $rtt->getSRTT(), $this->wMax, $this->k, $this->mss);
+        $est = Cubic::wEst($t, $rtt->getSRTT(), $this->wMax, $this->mss);
         $cubicCwnd = $this->window;
         if ($w < $est) {
             $cubicCwnd = max($cubicCwnd, (int)floor($est));
@@ -67,6 +67,12 @@ final class Cubic extends Controller
         $this->k = Cubic::cubicK($this->wMax, $this->mss);
         $this->cwndInc = (int)floor($this->cwndInc * Cubic::CUBIC_BETA);
         $this->logger->log("congestion_window_decrease", "window", $this->window);
+    }
+
+    public function setMSS(int $mss): void
+    {
+        $this->mss = $mss;
+        $this->window = max($this->window, $this->minimumWindow());
     }
 
     public function getWindow(): int

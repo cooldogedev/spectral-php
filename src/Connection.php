@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace cooldogedev\spectral;
 
-use cooldogedev\spectral\congestion\Pacer;
+use cooldogedev\spectral\congestion\RTT;
 use cooldogedev\spectral\congestion\Sender;
 use cooldogedev\spectral\frame\Acknowledgement;
 use cooldogedev\spectral\frame\ConnectionClose;
@@ -16,7 +16,6 @@ use cooldogedev\spectral\frame\StreamClose;
 use cooldogedev\spectral\frame\StreamData;
 use cooldogedev\spectral\util\Address;
 use cooldogedev\spectral\util\log\Logger;
-use cooldogedev\spectral\util\RTT;
 use cooldogedev\spectral\util\Time;
 use function array_chunk;
 use function strlen;
@@ -27,7 +26,6 @@ abstract class Connection
 
     protected readonly AckQueue $ack;
     protected readonly Sender $sender;
-    protected readonly Pacer $pacer;
     protected readonly ReceiveQueue $receiveQueue;
     protected readonly RetransmissionQueue $retransmission;
     protected readonly SendQueue $sendQueue;
@@ -39,7 +37,6 @@ abstract class Connection
 
     protected int $sequenceID = 0;
     protected int $idle = 0;
-    protected int $mss = MTUDiscovery::MTU_MIN;
 
     protected bool $closed = false;
 
@@ -48,18 +45,16 @@ abstract class Connection
         $now = Time::unixNano();
         $this->logger = Logger::create($perspective);
         $this->ack = new AckQueue();
-        $this->sender = new Sender($this->logger, $now, MTUDiscovery::MTU_MIN);
-        $this->pacer = new Pacer();
+        $this->sender = new Sender($this->logger, $now, Protocol::MIN_PACKET_SIZE);
         $this->receiveQueue = new ReceiveQueue();
         $this->retransmission = new RetransmissionQueue();
         $this->sendQueue = new SendQueue();
         $this->streams = new StreamMap();
         $this->rtt = new RTT();
         $this->discovery = new MTUDiscovery(function (int $mtu): void {
-            $this->logger->log("mtu_update", "old", $this->mss, "new", $mtu);
-            $this->mss = $mtu;
             $this->sender->setMSS($mtu);
             $this->sendQueue->setMSS($mtu);
+            $this->logger->log("mtu_update", "new", $mtu);
         });
         $this->idle = $now + Connection::CONNECTION_ACTIVITY_TIMEOUT;
     }
@@ -128,10 +123,10 @@ abstract class Connection
                 for ($i = $start; $i <= $end; $i++) {
                     $entry = $this->retransmission->remove($i);
                     if ($entry !== null) {
-                        $this->sender->onAck($now, $entry->sent, $this->rtt->getSRTT(), strlen($entry->payload));
                         if ($i === $fr->max) {
-                            $this->rtt->add(Time::unixNano() - $entry->sent, $fr->delay);
+                            $this->rtt->add($now - $entry->sent, Time::MICROSECOND * $fr->delay);
                         }
+                        $this->sender->onAck($now, $entry->sent, $this->rtt, strlen($entry->payload) - Protocol::PACKET_HEADER_SIZE);
                     }
                 }
             }
@@ -189,7 +184,7 @@ abstract class Connection
     {
         if (!$this->discovery->discovered && $this->discovery->sendProbe($now, $this->rtt->getSRTT())) {
             $this->writeControl(MTURequest::create($this->discovery->current));
-            $this->logger->log("mtu_probe", "old", $this->mss, "new", $this->discovery->current);
+            $this->logger->log("mtu_probe", "new", $this->discovery->current);
         }
 
         while ($this->sendQueue->available()) {
@@ -202,25 +197,28 @@ abstract class Connection
 
     private function transmit(int $now): bool
     {
-        [$total, $payload] = $this->sendQueue->pack($this->sender->getAvailable());
-        if ($total === 0) {
-            $this->logger->log("congestion_blocked");
+        $available = $this->sender->getAvailable();
+        if ($available === 0) {
+            $this->logger->log("congestion_block", "window", $available);
             return false;
         }
 
+        [$total, $payload] = $this->sendQueue->pack($available);
         $length = strlen($payload);
-        $delay = $this->pacer->delay($now, $this->rtt->getSRTT(), $length, $this->mss, $this->sender->getWindow());
-        if ($delay > $now) {
-            $this->logger->log("pacer_block", "len", $length, "delay", $now - $delay);
+        if ($total === 0) {
+            $this->logger->log("congestion_block", "len", $length, "window", $available);
             return false;
         }
 
+        if ($this->sender->getTimeUntilSend($now, $this->rtt, $length) > $now) {
+            $this->logger->log("pacer_block", "len", $length, "window", $available);
+            return false;
+        }
         $this->sequenceID++;
         $pk = Pack::pack($this->connectionID, $this->sequenceID, $total, $payload);
         $this->sendQueue->flush();
         $this->conn->write($pk);
         $this->sender->onSend($length);
-        $this->pacer->onSend($length);
         $this->retransmission->add($now, $this->sequenceID, $pk);
         return true;
     }

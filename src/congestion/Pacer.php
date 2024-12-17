@@ -27,7 +27,7 @@ final class Pacer
         $this->prev = Time::unixNano();
     }
 
-    public function delay(int $now, int $rtt, int $bytes, int $mss, int $window): int
+    public function getTimeUntilSend(int $now, int $rtt, int $bytes, int $mss, int $window): int
     {
         if ($mss !== $this->mss || $window !== $this->window) {
             $this->capacity = Pacer::optimalCapacity($rtt, $mss, $window);
@@ -36,11 +36,7 @@ final class Pacer
             $this->window = $window;
         }
 
-        if ($this->tokens >= $bytes) {
-            return 0;
-        }
-
-        if ($window >= Math::MAX_UINT32) {
+        if ($this->tokens >= $bytes || $window >= Math::MAX_UINT32) {
             return 0;
         }
 
@@ -58,7 +54,11 @@ final class Pacer
 
     public function onSend(int $bytes): void
     {
-        $this->tokens = max($this->tokens - $bytes, 0);
+        if ($this->tokens > $bytes) {
+            $this->tokens -= $bytes;
+        } else {
+            $this->tokens = 0;
+        }
     }
 
     private static function optimalCapacity(int $rtt, int $mss, int $window): int
