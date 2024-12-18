@@ -19,7 +19,6 @@ use function socket_create;
 use function socket_getsockname;
 use function socket_recvfrom;
 use function socket_select;
-use function socket_set_nonblock;
 use function spl_object_id;
 use const AF_INET;
 use const MSG_DONTWAIT;
@@ -65,7 +64,6 @@ final class Listener
             @socket_close($socket);
             throw new RuntimeException("failed to bind socket");
         }
-        socket_set_nonblock($socket);
         socket_getsockname($socket, $localAddress, $localPort);
         $this->localAddress = new Address($localAddress, $localPort);
         $this->registerSocket($socket, fn () => $this->readSocket($socket));
