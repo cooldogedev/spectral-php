@@ -17,7 +17,7 @@ use cooldogedev\spectral\frame\StreamData;
 use cooldogedev\spectral\util\Address;
 use cooldogedev\spectral\util\log\Logger;
 use cooldogedev\spectral\util\Time;
-use function array_chunk;
+use function floor;
 use function strlen;
 
 abstract class Connection
@@ -146,40 +146,6 @@ abstract class Connection
         };
     }
 
-    /**
-     * @internal
-     */
-    public function writeControl(Frame $fr, bool $needsAck = false): void
-    {
-        $payload = Pack::packSingle($fr);
-        $sequenceID = 0;
-        if ($needsAck) {
-            $this->sequenceID++;
-            $sequenceID = $this->sequenceID;
-        }
-
-        $pk = Pack::pack($this->connectionID, $sequenceID, 1, $payload);
-        if ($needsAck) {
-            $this->retransmission->add(Time::unixNano(), $sequenceID, $pk);
-        }
-        $this->conn->write($pk);
-    }
-
-    protected function createStream(int $streamID): ?Stream
-    {
-        if ($this->streams->get($streamID) !== null) {
-            $this->logger->log("duplicate_stream", "streamID", $streamID);
-            return null;
-        }
-        $stream = new Stream($this->sendQueue, $this->logger, $streamID);
-        $stream->registerCloseHandler(function () use ($streamID): void {
-            $this->streams->remove($this->sequenceID);
-            $this->writeControl(StreamClose::create($streamID), true);
-        });
-        $this->streams->add($stream, $streamID);
-        return $stream;
-    }
-
     private function maybeSend(int $now): void
     {
         if (!$this->discovery->discovered && $this->discovery->sendProbe($now, $this->rtt->getSRTT())) {
@@ -203,9 +169,9 @@ abstract class Connection
             return false;
         }
 
-        [$total, $payload] = $this->sendQueue->pack($available);
-        $length = strlen($payload);
-        if ($total === 0) {
+        $payload = $this->sendQueue->pack($available);
+        $length = $payload !== null ? strlen($payload) : 0;
+        if ($length === 0) {
             $this->logger->log("congestion_block", "len", $length, "window", $available);
             return false;
         }
@@ -215,25 +181,30 @@ abstract class Connection
             return false;
         }
         $this->sequenceID++;
-        $pk = Pack::pack($this->connectionID, $this->sequenceID, $total, $payload);
+        $pk = Pack::pack($this->connectionID, $this->sequenceID, $payload);
+        $this->conn->write($this->appendAcknowledgements($now, $pk));
         $this->sendQueue->flush();
-        $this->conn->write($pk);
         $this->sender->onSend($length);
         $this->retransmission->add($now, $this->sequenceID, $pk);
         return true;
     }
 
+    private function appendAcknowledgements(int $now, string $p): string
+    {
+        $total = (int)floor(($this->sendQueue->getMSS() - strlen($p) - 16) / 8);
+        $ack = $this->ack->flush($now, $total, true);
+        if ($ack !== null) {
+            [$ranges, $max, $delay] = $ack;
+            return $p . Pack::packSingle(Acknowledgement::create($delay, $max, $ranges));
+        }
+        return $p;
+    }
+
     private function acknowledge(int $now): void
     {
-        $result = $this->ack->flush($now);
-        if ($result !== null) {
-            [$queue, $max, $delay] = $result;
-            $ranges = Acknowledgement::generateAcknowledgementRanges($queue);
-            $fr = Acknowledgement::create($delay, $max, []);
-            foreach (array_chunk($ranges, 128) as $chunk) {
-                $fr->ranges = $chunk;
-                $this->writeControl($fr);
-            }
+        while (($ack = $this->ack->flush($now, Protocol::MAX_ACK_RANGES, false)) !== null) {
+            [$ranges, $max, $delay] = $ack;
+            $this->writeControl(Acknowledgement::create($delay, $max, $ranges));
         }
     }
 
@@ -245,6 +216,40 @@ abstract class Connection
             $this->sender->onCongestionEvent($now, $sentTime);
             $this->conn->write($payload);
         }
+    }
+
+    /**
+     * @internal
+     */
+    public function writeControl(Frame $fr, bool $needsAck = false): void
+    {
+        $payload = Pack::packSingle($fr);
+        $sequenceID = 0;
+        if ($needsAck) {
+            $this->sequenceID++;
+            $sequenceID = $this->sequenceID;
+        }
+
+        $pk = Pack::pack($this->connectionID, $sequenceID, $payload);
+        if ($needsAck) {
+            $this->retransmission->add(Time::unixNano(), $sequenceID, $pk);
+        }
+        $this->conn->write($pk);
+    }
+
+    protected function createStream(int $streamID): ?Stream
+    {
+        if ($this->streams->get($streamID) !== null) {
+            $this->logger->log("duplicate_stream", "streamID", $streamID);
+            return null;
+        }
+        $stream = new Stream($this->sendQueue, $this->logger, $streamID);
+        $stream->registerCloseHandler(function () use ($streamID): void {
+            $this->streams->remove($this->sequenceID);
+            $this->writeControl(StreamClose::create($streamID), true);
+        });
+        $this->streams->add($stream, $streamID);
+        return $stream;
     }
 
     private function internalClose(): void

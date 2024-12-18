@@ -19,13 +19,12 @@ final class Pack
         return $buf->toString();
     }
 
-    public static function pack(int $connectionID, int $sequenceID, int $total, string $frames): string
+    public static function pack(int $connectionID, int $sequenceID, string $frames): string
     {
         $buf = Pack::getBuffer();
         $buf->writeByteArray(Protocol::MAGIC);
         $buf->writeSignedLongLE($connectionID);
         $buf->writeUnsignedIntLE($sequenceID);
-        $buf->writeUnsignedIntLE($total);
         $buf->writeByteArray($frames);
         return $buf->toString();
     }
@@ -44,14 +43,14 @@ final class Pack
 
         $connectionID = $buf->readSignedLongLE();
         $sequenceID = $buf->readUnsignedIntLE();
-        $total = $buf->readUnsignedIntLE();
         $frames = [];
-        for ($i = 0; $i < $total; $i++) {
+        while ($buf->getUsedLength() > $buf->getReadOffset()) {
             $fr = Pool::getFrame($buf->readUnsignedIntLE());
-            if ($fr !== null) {
-                $fr->decode($buf);
-                $frames[] = $fr;
+            if ($fr === null) {
+                break;
             }
+            $fr->decode($buf);
+            $frames[] = $fr;
         }
         return [$connectionID, $sequenceID, $frames];
     }

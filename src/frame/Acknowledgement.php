@@ -5,9 +5,7 @@ declare(strict_types=1);
 namespace cooldogedev\spectral\frame;
 
 use pmmp\encoding\ByteBuffer;
-use function array_slice;
 use function count;
-use function sort;
 
 final class Acknowledgement extends Frame
 {
@@ -54,25 +52,5 @@ final class Acknowledgement extends Frame
                 $buf->readUnsignedIntLE(),
             ];
         }
-    }
-
-    /**
-     * @return array<int, array{0: int, 1: int}>
-     */
-    public static function generateAcknowledgementRanges(array $list): array
-    {
-        sort($list);
-        $ranges = [];
-        $start = $list[0];
-        $end = $list[0];
-        foreach (array_slice($list, 1) as $value) {
-            if ($value !== $end + 1) {
-                $ranges[] = [$start, $end];
-                $start = $value;
-            }
-            $end = $value;
-        }
-        $ranges[] = [$start, $end];
-        return $ranges;
     }
 }

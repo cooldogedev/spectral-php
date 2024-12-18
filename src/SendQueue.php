@@ -13,7 +13,6 @@ use function strlen;
 final class SendQueue
 {
     private array $queue = [];
-    private int $total = 0;
     private int $mss = Protocol::MIN_PACKET_SIZE;
     private ByteBuffer $pk;
 
@@ -25,7 +24,7 @@ final class SendQueue
 
     public function available(): bool
     {
-        return count($this->queue) > 0 || $this->total > 0;
+        return count($this->queue) > 0 || $this->pk->getUsedLength() > 0;
     }
 
     public function getMSS(): int
@@ -43,9 +42,9 @@ final class SendQueue
         $this->queue[] = $payload;
     }
 
-    public function pack(int $window): ?array
+    public function pack(int $window): ?string
     {
-        if (count($this->queue) === 0 && $this->total === 0) {
+        if (count($this->queue) === 0 && $this->pk->getUsedLength() === 0) {
             return null;
         }
 
@@ -57,9 +56,8 @@ final class SendQueue
             }
             array_shift($this->queue);
             $this->pk->writeByteArray($entry);
-            $this->total++;
         }
-        return [$this->total, $this->pk->toString()];
+        return $this->pk->toString();
     }
 
     public function flush(): void
@@ -67,7 +65,6 @@ final class SendQueue
         $this->pk->clear();
         $this->pk->setReadOffset(0);
         $this->pk->setWriteOffset(0);
-        $this->total = 0;
     }
 
     public function clear(): void
